@@ -38,4 +38,4 @@ driver's functions, same mechanism as Day 2's file_operations table,
 just through V4L2's wrapper.
 
 ## Diagram
-![V4L2 flow diagram]("C:\Users\Unnati\Downloads\flowchart.jpeg")
+![V4L2 flow diagram]("flowchart.jpeg")
