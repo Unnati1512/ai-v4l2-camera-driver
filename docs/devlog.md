@@ -126,8 +126,23 @@ to a STREAMON-related error instead of the earlier REQBUFS error -
 exactly the expected sign of progress, since STREAMON isn't 
 implemented until Day 11.
 
+**Verification detail:** confirmed REQBUFS actually succeeded (not 
+just "didn't error") by checking that queue_setup's log line printed 
+with the correct buffer count and size (4 buffers of 614400 bytes, 
+matching Day 9's exact frame size calculation) - queue_setup only 
+gets called by vb2_ioctl_reqbufs on successful buffer allocation, so 
+this is stronger proof than just "no error was shown."
+
+**Note on VIDIOC_CREATE_BUFS error:** v4l2-ctl also tried a newer 
+optional ioctl (CREATE_BUFS) before falling back to REQBUFS - this 
+failed because I didn't wire up .vidioc_create_bufs, which is correct 
+and expected, since CREATE_BUFS isn't part of the required set for 
+Day 10 (REQBUFS/QUERYBUF/QBUF/DQBUF only). v4l2-ctl's fallback to 
+REQBUFS worked exactly as it should.
+
 **Key concept:** most of Week 2's "hard" ioctls (REQBUFS, QBUF, DQBUF) 
 aren't actually written by the driver author from scratch - vb2 
 provides correct, reusable implementations, and the real driver work 
 is correctly configuring the queue (Days 6-9) so those shared 
 functions have what they need to work against.
+
