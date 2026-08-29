@@ -1,7 +1,7 @@
 # AI-Ready V4L2 Camera Driver with Real-Time Frame Processing for Embedded Linux
 
 A custom Linux kernel driver built on the V4L2 (Video4Linux2) standard, 
-paired with a real-time AI inference application — built from scratch 
+paired with a real-time AI inference application that is built from scratch 
 to understand the full pipeline from kernel-space device drivers to 
 real-time computer vision.
 
@@ -9,7 +9,7 @@ real-time computer vision.
 
 This project implements:
 - A custom V4L2-compliant character device driver for Linux
-- Kernel-space buffer management for video frame capture (videobuf2)
+- Kernel space buffer management for video frame capture (videobuf2)
 - Pixel format negotiation and buffer request/queue/dequeue handling
 - A synthetic frame source, standing in for real camera hardware, so 
   the focus stays on the driver architecture itself
@@ -18,17 +18,16 @@ This project implements:
 
 ## Why I Built This
 
-I use cameras, video calls, and AI-powered apps every day and never 
-actually understood what's happening underneath — how does an 
+I use cameras, video calls, and AI powered apps every day and never 
+actually understood what's happening underneath like how does an 
 operating system "see" a camera at all? What does the kernel actually 
-do when an app asks for a video frame? I was tired of treating it as 
-a black box.
+do when an app asks for a video frame? 
 
 This project is my attempt to go below the application layer for 
-once — not use a library, but actually build and understand the 
+once - not use a library, but actually build and understand the 
 mechanism. It's also strategically the right kind of depth for the 
 embedded/AI hardware roles I'm targeting, but that's not the only 
-reason, and I don't want it to be — the curiosity is what's actually 
+reason, and I don't want it to be it's the curiosity is what's actually 
 carried me through the harder debugging sessions. This project is my 
 attempt to go one level deeper.
 
@@ -52,13 +51,13 @@ attempt to go one level deeper.
 ## Project Structure
 
 driver/ — kernel module source code, organized by development day
-docs/ — daily development log, architecture notes, diagrams
-userspace/ — AI inference consumer application (coming in Week 3)
+docs/ - daily development log, architecture notes, diagrams
+userspace/ - AI inference consumer application (coming in Week 3)
 
 
 ## Development Log
 
-Full day-by-day build log, including bugs hit, root causes, and what I 
+Full day by day build log, including bugs hit, root causes, and what I 
 learned from each, is in [docs/devlog.md](docs/devlog.md).
 
 ## Tech Stack
@@ -69,5 +68,5 @@ learned from each, is in [docs/devlog.md](docs/devlog.md).
 
 ## Author
 
-Unnati Chaturvedi — Final-year ECE student at Pandit Deendayal Energy University, building toward embedded AI/hardware 
+Unnati Chaturvedi - Final year ECE student at Pandit Deendayal Energy University, building toward embedded AI/hardware 
 engineering roles.
