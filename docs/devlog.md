@@ -146,3 +146,29 @@ provides correct, reusable implementations, and the real driver work
 is correctly configuring the queue (Days 6-9) so those shared 
 functions have what they need to work against.
 
+## Day 11 — STREAMON/STREAMOFF with Synthetic Frame Generator 
+Implemented the full streaming lifecycle: a spinlock-protected buffer 
+queue (connecting directly to Day 5's locking concepts - protects a 
+shared array touched by both buf_queue, called when apps queue 
+buffers, and my capture thread, running independently), a kernel 
+thread (kthread) that runs on a ~30fps loop filling buffers with 
+synthetic pixel data, and start_streaming/stop_streaming vb2_ops 
+callbacks that launch/stop this thread.
+
+**Verified with full success**, using v4l2-ctl's --verbose output to 
+see every ioctl in the chain succeed in order: REQBUFS -> QUERYBUF x4 
+-> QBUF x4 -> STREAMON -> 5 real frames dequeued, each reporting 
+bytesused: 614400 (exactly matching my frame size calculation from 
+Day 8/9). This is genuine proof that data flows correctly from my 
+kernel thread's memset() call, through vb2's buffer management, all 
+the way to a real userspace tool - the actual payoff of everything 
+built since Day 4.
+
+**Key concept:** buffer_queue() adds a buffer to my own tracking 
+array (protected by the spinlock) when an app queues it; the capture 
+thread independently pulls from that same array, fills it, and calls 
+vb2_buffer_done() to hand it back to vb2/the app. This producer-
+consumer pattern, with the spinlock preventing the two sides from 
+corrupting the shared array, is a direct real application of Day 5's 
+locking theory - not just something I read about, something I 
+actually needed and used.
