@@ -172,3 +172,29 @@ consumer pattern, with the spinlock preventing the two sides from
 corrupting the shared array, is a direct real application of Day 5's 
 locking theory - not just something I read about, something I 
 actually needed and used.
+
+## Day 12 — First Real Milestone: Saved Frames + Verified Output
+Captured 10 real frames from my driver to an actual file on disk 
+(v4l2-ctl --stream-to=captured_frames.raw), rather than just counting 
+successful captures. Verified the file size independently against my 
+own math: 10 frames x 614400 bytes/frame = 6,144,000 bytes (~5.9MB), 
+which matched the actual file size exactly - real, external proof the 
+byte count was correct, not just "no error was shown."
+
+Wrote my first Python script in this project (using numpy + Pillow) 
+to decode a raw YUYV frame into a viewable PNG image - extracted just 
+the Y (luminance) channel for a simple grayscale preview. This is a 
+direct precursor to Week 3's AI inference pipeline, which will do 
+similar raw-frame decoding before running a model on it.
+
+**Verification detail:** frame 0 rendered as solid black (fill_value 
+starts at 0 - a static u8 variable with no explicit initializer 
+defaults to 0 in C), while frame 4 rendered as a slightly lighter 
+shade, matching the expected fill_value = 4 x 10 = 40. This confirmed 
+my capture thread's shifting fill value is genuinely changing frame 
+to frame, not stuck at one value - real evidence the frame generator 
+logic works correctly across multiple frames, not just once.
+
+**Milestone reached:** matches the roadmap's "first real milestone, 
+don't rush this one" - genuine, file-verified, independently-checked 
+proof of a working end-to-end capture pipeline.
