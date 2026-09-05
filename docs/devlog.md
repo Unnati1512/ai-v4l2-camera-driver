@@ -186,7 +186,6 @@ to decode a raw YUYV frame into a viewable PNG image - extracted just
 the Y (luminance) channel for a simple grayscale preview. This is a 
 direct precursor to Week 3's AI inference pipeline, which will do 
 similar raw-frame decoding before running a model on it.
-
 **Verification detail:** frame 0 rendered as solid black (fill_value 
 starts at 0 - a static u8 variable with no explicit initializer 
 defaults to 0 in C), while frame 4 rendered as a slightly lighter 
@@ -198,3 +197,72 @@ logic works correctly across multiple frames, not just once.
 **Milestone reached:** matches the roadmap's "first real milestone, 
 don't rush this one" - genuine, file-verified, independently-checked 
 proof of a working end-to-end capture pipeline.
+
+## Day 13 — Robustness Testing: Concurrent Access & Safe Removal
+
+**Goal:** verify my driver behaves safely under conditions beyond the 
+normal happy path - concurrent access attempts, abrupt disconnects, and 
+attempts to remove the module while it's actively in use.
+
+**What I tested and the results:**
+
+1. **Double-open (two apps requesting buffers simultaneously)** - ran 
+   one v4l2-ctl stream in the background, then immediately tried to 
+   open the same device with a second instance. The second request was 
+   correctly rejected with "VIDIOC_REQBUFS returned -1 (Device or 
+   resource busy)". This confirms vdev->lock (my mutex) and V4L2's 
+   per-queue ownership model correctly prevent two sessions from 
+   touching the buffer queue at once - no crash, no corrupted state.
+
+2. **Abrupt disconnect (Ctrl+C mid-stream)** - killed a running stream 
+   command mid-capture instead of letting it finish normally. dmesg 
+   confirmed stop_streaming and capture thread stopping still ran 
+   correctly, meaning my cleanup path handles a non-graceful client 
+   disconnect, not just a clean STREAMOFF.
+
+3. **rmmod while actively streaming** - attempted to unload the module 
+   while a capture was in progress. Got "rmmod: ERROR: Module myv4l2 is 
+   in use" - the kernel's own built-in module reference counting 
+   refused the removal. This is a genuinely important finding: it's 
+   not my own code's protection catching this, it's Linux's underlying 
+   module system itself refusing to let in-use code be removed from 
+   memory. Once streaming stopped, a follow-up rmmod succeeded cleanly 
+   (confirmed via dmesg: init -> registered -> unregistered, no warnings).
+
+**Where I actually got stuck, and how I solved it:**
+
+- A stray space in a `--set-fmt-video` argument caused v4l2-ctl to dump 
+  its entire help page instead of a clear error - fixed by removing the 
+  space; a reminder that CLI argument parsing can fail in confusing, 
+  non-obvious ways.
+- Backgrounding a long stream command with `&` meant Ctrl+C had no 
+  effect (it only signals the foreground process) - I had to learn and 
+  use `jobs` to list background processes and `kill -9 %1` to actually 
+  terminate the stuck one.
+- The VM itself became unresponsive twice during testing - running 
+  multiple overlapping long-duration (1000-10000 frame) streams on a 
+  resource-constrained VM (2-3GB RAM, 2 CPUs) pushed it past what it 
+  could reliably handle. I recovered both times with a clean VM reset 
+  (Machine -> Reset in VirtualBox) rather than fighting a frozen SSH 
+  session, then verified recovery with `uptime` and `lsmod` before 
+  continuing.
+
+**Not completed today:** a planned 50x rapid open/close/stream stress 
+loop - the VM instability interrupted testing before I reached this 
+step. Worth revisiting with more conservative stream counts.
+
+**Commands that actually got me through today:**
+
+jobs # list background jobs
+kill -9 %1 # force-kill a stuck background job
+sudo dmesg -T | tail # timestamped kernel log, easier to correlate
+# with when things actually happened
+
+
+**My actual takeaway from today:** robustness testing isn't just about 
+proving my driver's own code is correct - it's also about learning the 
+real limits of my test environment, and not confusing "the VM is 
+overloaded" with "my driver has a bug." The rmmod-while-streaming result 
+specifically was worth the trouble: it's genuine, verifiable proof that 
+even if I'd missed something in my own locking, the kernel's own module 
+system has an independent safety net underneath it.
