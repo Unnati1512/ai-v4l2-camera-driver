@@ -266,3 +266,54 @@ overloaded" with "my driver has a bug." The rmmod-while-streaming result
 specifically was worth the trouble: it's genuine, verifiable proof that 
 even if I'd missed something in my own locking, the kernel's own module 
 system has an independent safety net underneath it.
+
+
+## Day 15 — AI Inference Pipeline: ONNX Runtime Setup
+
+Started Week 3 by getting a real inference pipeline running against my 
+driver's output, rather than jumping straight into a live capture loop. 
+Installed ONNX Runtime and OpenCV (headless build, since this VM has no 
+display server) and picked MobileNetV2 as my first model - it's a small, 
+widely-used image classification network (~14MB, ImageNet-trained, 1000 
+output classes), a reasonable first target before moving to something 
+heavier like object detection.
+
+**GPU note:** running CPU-only inference here. VirtualBox doesn't expose 
+GPU passthrough by default, and setting that up is its own separate 
+rabbit hole I'm deliberately not chasing this week - CPU inference is 
+sufficient to prove the pipeline itself works correctly, which is 
+today's actual goal.
+
+**What I verified, and why each step mattered:**
+- Loaded the model and printed its expected input/output shapes 
+  (input: [batch, 3, 224, 224], output: [batch, 1000]) before writing 
+  any inference code - wanted to confirm exactly what shape of data the 
+  model expects rather than guessing and debugging a shape mismatch 
+  later.
+- Ran inference on frame4_preview.png (my Day 12 synthetic capture) and 
+  got a real, structured output - a predicted class index and 
+  confidence score. Since that image is a flat gray frame with no real 
+  object in it, the prediction itself is meaningless - that's expected 
+  and fine, since the point today was proving the full chain (load 
+  model -> preprocess image -> run inference -> get output) executes 
+  without errors, not that the prediction is correct.
+- Wanted a way to actually confirm the model was processing real pixel 
+  data rather than silently returning some fixed/cached result 
+  regardless of input, so I generated a second, visually distinct test 
+  image (a synthetic checkerboard pattern) and reran inference against 
+  it. Getting a different class index/confidence than the gray-frame 
+  test confirms the model is genuinely reading and reacting to the 
+  actual input array, not just returning a constant.
+
+**Key concept:** preprocessing has to match exactly what the model 
+expects - resizing to 224x224, normalizing pixel values to a 0-1 float 
+range, and reordering the array axes from (height, width, channels) to 
+(channels, height, width) to match PyTorch/ONNX's expected tensor 
+layout. Getting any of these wrong wouldn't necessarily error out - it 
+would just silently produce garbage predictions, which is why the 
+checkerboard sanity check felt worth doing before trusting this 
+pipeline going forward.
+
+**What's next:** this static-image test proves the inference side works. 
+The actual integration - reading live frames directly out of my V4L2 
+driver's buffers instead of a saved PNG - starts next.
