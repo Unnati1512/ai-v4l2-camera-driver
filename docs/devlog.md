@@ -317,3 +317,193 @@ pipeline going forward.
 **What's next:** this static-image test proves the inference side works. 
 The actual integration - reading live frames directly out of my V4L2 
 driver's buffers instead of a saved PNG - starts next.
+
+## Day 16 — Object Detection with Bounding Boxes: YOLOv8n
+
+Today I moved from image classification to real object detection using
+YOLOv8n. Unlike the classification model used previously, an object
+detection model should identify both *what* an object is and *where* it
+is in the image by producing bounding boxes.
+
+### 1. First approach: exporting YOLOv8n to ONNX
+
+My initial plan was to install the `ultralytics` package and export a
+YOLOv8n model to ONNX myself.
+
+However, installing `ultralytics` pulled in PyTorch, torchvision and a
+large CUDA-related dependency stack. The PyTorch download alone was
+around 554 MB. The installation eventually failed with a disk quota
+error.
+
+This was confusing because `df -h ~` showed approximately 17 GB of
+actual free disk space.
+
+The important distinction was that the error was not caused by the
+Ubuntu filesystem being full. It was a separate per-user disk quota
+being exceeded by the large package installation.
+
+### Solution
+
+Since the goal of this day was to understand and implement the
+userspace object-detection pipeline rather than to study model export,
+I avoided installing the entire Ultralytics/PyTorch toolchain.
+
+Instead, I downloaded an already-converted YOLOv8n ONNX model directly
+from a public model host.
+
+The resulting `yolov8n.onnx` file was approximately 13 MB.
+
+This allowed me to continue with ONNX Runtime without pulling a large
+deep-learning framework and CUDA dependencies into the VM.
+
+### 2. Verified the ONNX model
+
+I inspected the downloaded model before writing the detection code.
+
+The model reported:
+
+- Input name: `images`
+- Input shape: `[1, 3, 640, 640]`
+- Output name: `output0`
+- Output shape: `[1, 84, 8400]`
+
+This confirmed that the ONNX model was loading correctly and that I
+could proceed with preprocessing, inference and output parsing.
+
+### 3. First detection attempt — boxes were invisible
+
+The first version of `detect_and_draw.py` ran successfully and reported:
+
+    Detections drawn: 43
+    Saved detected_output.png
+
+However, the generated image did not visibly contain bounding boxes.
+
+At first this was confusing because the program was not producing any
+Python errors and it was apparently detecting objects.
+
+I therefore added debug output to inspect the raw bounding-box values
+before converting them into image coordinates.
+
+The output included values such as:
+
+    cx=0.4968 cy=0.4543 w=0.9873 h=0.4861
+    class_id=5 conf=0.76
+
+The values were clearly in the normalized 0-1 range.
+
+For example, the detected bus had:
+
+    cx ≈ 0.50
+    cy ≈ 0.45
+    w  ≈ 0.99
+    h  ≈ 0.49
+
+These values made sense for the test image because the bus occupies a
+large portion of the frame.
+
+### 4. Root cause — incorrect coordinate conversion
+
+The problem was in my conversion from YOLO's normalized coordinates
+to the original image coordinates.
+
+I originally used:
+
+    x1 = (cx - w / 2) / INPUT_SIZE * orig_w
+    y1 = (cy - h / 2) / INPUT_SIZE * orig_h
+    x2 = (cx + w / 2) / INPUT_SIZE * orig_w
+    y2 = (cy + h / 2) / INPUT_SIZE * orig_h
+
+The mistake was dividing by `INPUT_SIZE` (640).
+
+The debug output showed that the coordinates I was working with were
+already normalized fractions of the image, approximately in the
+range 0-1. Dividing them by 640 again reduced them to values close to
+zero.
+
+As a result, the calculated bounding boxes were effectively only about
+1 pixel in size and were drawn near the top-left corner of the image.
+
+This explained why the program could report successful detections while
+the output image appeared to contain no boxes.
+
+### 5. Fix
+
+I changed the conversion to multiply the normalized coordinates
+directly by the original image dimensions:
+
+    x1 = (cx - w / 2) * orig_w
+    y1 = (cy - h / 2) * orig_h
+    x2 = (cx + w / 2) * orig_w
+    y2 = (cy + h / 2) * orig_h
+
+No additional division by 640 is required.
+
+For example, a normalized box with approximately:
+
+    cx = 0.497
+    cy = 0.454
+    w  = 0.987
+    h  = 0.486
+
+corresponds to a box covering most of the image width, which matches
+the position and size of the bus in the test photograph.
+
+### 6. Result after the fix
+
+After correcting the coordinate conversion, the bounding boxes became
+visible in the generated image.
+
+The output now correctly shows bounding boxes around the detected bus
+and pedestrians in the test photograph.
+
+The detection pipeline is therefore working end-to-end:
+
+    image -> resize to 640*640 -> normalize / rearrange channels -> YOLOv8n ONNX inference ->  parse [1, 84, 8400] output -> obtain class + confidence + bounding box ->  convert normalized coordinates to original image coordinates -> draw bounding boxes ->  save detected_output.png
+
+### 7. Current limitation — duplicate boxes
+
+The current implementation still draws multiple overlapping boxes for
+the same physical object.
+
+For example, the model produced several high-confidence predictions
+for the same bus. This is why the final image contains several
+overlapping boxes instead of one clean box per object.
+
+This is expected with the current implementation because Non-Maximum
+Suppression (NMS) has not been implemented yet.
+
+NMS will be added as a post-processing step so that overlapping
+predictions referring to the same object can be reduced to the best
+detection.
+
+### Key lessons
+
+1. A program completing without errors does not mean that its output is
+   correct. The first implementation reported 43 detections even
+   though the boxes were effectively invisible.
+
+2. Inspecting intermediate numerical values was critical to debugging.
+   Printing the raw `cx`, `cy`, `w` and `h` values immediately showed
+   that the coordinates were already normalized.
+
+3. Understanding the coordinate system is just as important as getting
+   the neural-network inference to run. A correct model output can
+   still produce an incorrect visualization if the coordinate
+   conversion is wrong.
+
+4. When a dependency installation becomes unnecessarily large for the
+   actual objective, using a pre-converted model can be a reasonable
+   engineering decision. In this case it avoided pulling PyTorch and
+   CUDA dependencies into a VM that has no GPU.
+
+### Final status
+
+- YOLOv8n ONNX model downloaded and loaded successfully.
+- ONNX input/output shapes verified.
+- Object detection inference working.
+- Bounding-box parsing working.
+- Coordinate-conversion bug identified and fixed.
+- Bounding boxes now visible on the output image.
+- Multiple overlapping detections remain because NMS has not yet been
+  implemented.
