@@ -55,7 +55,7 @@ verified end to end. Currently in the documentation/polish phase.
 | Robustness testing (concurrent access, safe removal) |  Complete |
 | AI inference integration (YOLOv8n, NMS, live capture) |  Complete |
 | Performance benchmarking & stability testing |  Complete |
-| DMA-BUF zero-copy (stretch goal) | ⚠️Attempted, documented blocker (see Limitations) |
+| DMA-BUF zero-copy (stretch goal) | Attempted, documented blocker (see Limitations) |
 
 
 ## Benchmarks
