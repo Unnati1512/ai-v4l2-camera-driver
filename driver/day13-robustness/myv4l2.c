@@ -1,3 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0
+
+
+/*
+ * myv4l2 - AI-Ready Synthetic V4L2 Camera Driver
+ *
+ * A software-defined V4L2 capture driver implementing device 
+ * registration, vb2 buffer queue management, format negotiation, and 
+ * full streaming lifecycle with a synthetic frame generator kthread.
+ *
+ * This is the final, complete version of the driver (Day 13 
+ * robustness-tested baseline, used unchanged through Day 21's AI 
+ * inference integration).
+ */
+
+
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
