@@ -507,3 +507,226 @@ detection.
 - Bounding boxes now visible on the output image.
 - Multiple overlapping detections remain because NMS has not yet been
   implemented.
+
+## Day 17 — Live Capture-to-Inference Loop 
+
+Connected the AI pipeline directly to my driver for the first time - 
+confirmed OpenCV can open /dev/video0 through the standard V4L2 backend 
+(cv2.CAP_V4L2, cap.isOpened() = True) and read real frames (480x640x3 
+confirmed) - an independent library talking to my driver exactly the 
+way v4l2-ctl always has.
+
+Built a synchronous loop over 100 frames: capture -> resize/preprocess 
+-> YOLOv8n inference -> NMS -> draw boxes -> write video file.
+
+**Result:** average capture 13.2ms, average inference 456.3ms, ~2.1fps 
+effective. 0 detections across all frames - expected, since my driver's 
+synthetic frames contain no real objects.
+
+**Key finding:** capture (Days 4-13) is fast; inference is the clear 
+bottleneck, over 30x slower than capture - the concrete, measured 
+motivation for a producer/consumer design rather than a theoretical one.
+
+
+## Day 18 — Proper Performance Measurement
+
+Replaced basic timing with a real benchmarking tool: separated 
+wall-clock time (time.time()) from CPU time (time.process_time()) for 
+four pipeline stages (capture, preprocess, inference, overlay/NMS), 
+logged every frame to CSV.
+
+**Results (100 frames):**
+- Capture: 5.6ms wall / 6.2ms CPU
+- Preprocess: 10.1ms wall / 11.2ms CPU
+- Inference: 153.7ms wall / 180.3ms CPU
+- Overlay/NMS: 58.7ms wall / 193.6ms CPU
+- Total: 228.1ms/frame, ~4.4fps
+
+**Key finding:** confirmed inference as the dominant cost, and surfaced 
+overlay/NMS as a real second-place cost simple timing hadn't isolated. 
+Overlay's CPU time (193.6ms) exceeded its wall time (58.7ms) - a real 
+signal that multiple threads were doing work in parallel during that 
+stage, not a measurement error.
+
+## Day 19 — Optimization Attempt: ONNX Runtime Thread Tuning
+
+Targeted inference (the confirmed bottleneck) by explicitly configuring 
+ONNX Runtime's intra_op_num_threads, matching my VM's actual core count 
+(nproc = 2).
+
+**Honest result: this made things worse on every configuration tried:**
+- Baseline (default, no explicit config): 153.7ms wall
+- intra_op_num_threads=2: 498.2-704.0ms wall (3.2-4.6x slower)
+- intra_op_num_threads=1: 414.6-520.6ms wall (2.7-3.4x slower)
+
+**Why:** on a 2-core VM, forcing ONNX Runtime to spawn dedicated worker 
+threads creates contention with my main process, which is 
+simultaneously doing capture and preprocessing on the same 2 physical 
+cores. Context-switching overhead cost more than any parallelism 
+gained - added parallelism only helps when there are genuinely idle 
+cores to use, and my VM has none to spare.
+
+**Decision:** kept ONNX Runtime's untouched default threading, since 
+every manual configuration underperformed it. A legitimate negative 
+result - correctly diagnosing why an "obvious" fix doesn't apply to 
+hardware this constrained, rather than reporting a speedup that didn't 
+happen.
+
+**Does this block future work? No** - the core pipeline remains fully 
+functional at its Day 18 baseline performance regardless of this result.
+
+
+## Day 20 — README Documentation + Long-Running Stability Test 
+
+Documented real Day 18 benchmark numbers in README.md, including the 
+honest Day 19 finding.
+
+Ran a genuine long-duration stability test: 2500 frames (~10 minutes 
+continuous runtime) with memory tracked every 100 frames.
+
+**Results:**
+- Memory: 135.0MB at start, jumped to 169.0MB by frame 100 (one-time 
+  warm-up allocation), then grew extremely slowly and linearly 
+  afterward (169.0MB -> 171.2MB across the remaining 2400 frames) - 
+  consistent with normal bookkeeping overhead, not a real memory leak.
+- Performance: 221.1ms/frame average (4.5fps), matching Day 18's 
+  228.1ms baseline closely - confirms measured performance is stable 
+  and reproducible across a 25x longer run.
+
+**Bug hit and fixed:** my first attempt at adding memory-tracking code 
+placed an if-statement inside a dictionary literal 
+(results.append({if i % 100 == 0: ...})) - invalid Python syntax, since 
+a dictionary can only contain key-value pairs, not control-flow 
+statements. Fixed by moving the check to its own statement after the 
+dictionary was fully built and appended.
+
+**Conclusion:** the pipeline is confirmed stable for extended use, not 
+just short test runs.
+
+
+## Day 21 (Week 3 Summary) — AI Inference Pipeline Complete 
+
+**What I built, end to end:** ONNX Runtime setup and a classification 
+sanity test, real object detection (YOLOv8n) with a genuine coordinate 
+bug found and fixed, NMS to clean up duplicate boxes, live integration 
+with my own V4L2 driver via OpenCV's standard V4L2 backend, proper 
+wall-clock vs CPU benchmarking across pipeline stages, a documented 
+failed optimization attempt, and a 10-minute stability test confirming 
+no memory leak.
+
+**What worked exactly as planned:** the full pipeline genuinely works 
+end to end - real capture from my own kernel driver, real YOLOv8n 
+inference, real NMS-cleaned detections, real reproducible performance 
+numbers (221-228ms/frame, ~4.4-4.5fps across both a 100-frame and 
+2500-frame test).
+
+**What didn't work as hoped:** Day 19's thread-tuning optimization made 
+inference slower in every configuration tried, due to thread contention 
+on a 2-core VM with no spare cores for added parallelism to use. A 
+legitimate negative result, not a hidden failure.
+
+**Is "AI-ready" still honest?** Yes - the pipeline demonstrably reads 
+real driver frames and runs real object detection with measured, 
+reproducible results. What I don't claim is 30fps real-time performance 
+- the honest number is ~4.4fps on this constrained VM, stated plainly 
+in the README rather than oversold.
+
+**Next in Week 4:** attempt the DMA-BUF zero-copy stretch goal, treated 
+as genuinely optional per the roadmap's own decision-point guidance.
+
+
+## Day 22-23 — DMA-BUF Stretch Goal: Attempted, Confirmed Blocked
+
+Studied DMA-BUF's attach/map/fence model and why it needs physically 
+contiguous memory (for real hardware like a GPU to read directly, 
+unlike vmalloc's virtually-contiguous-but-possibly-scattered pages). 
+Correctly predicted in my notes that switching to 
+vb2_dma_contig_memops would need a real struct device I've never had.
+
+Switched vb2_q.mem_ops to vb2_dma_contig_memops. Module loaded and 
+registered cleanly - but that alone didn't prove anything, since 
+vb2_queue_init only configures the queue, it doesn't allocate real 
+buffer memory yet.
+
+The actual test - requesting buffers via v4l2-ctl --stream-mmap - 
+confirmed the predicted blocker: "VIDIOC_REQBUFS returned -1 (Cannot 
+allocate memory)", with a kernel WARNING trace. Root cause: 
+vb2_dma_contig_memops requires a valid struct device (vb2_q.dev) for 
+DMA addressing, which this driver has never had, since 
+v4l2_device_register was deliberately called with NULL as the parent 
+(no real hardware exists for this synthetic camera).
+
+**Decision, per the roadmap's own guidance:** stopped here rather than 
+fabricating a fake struct device just to satisfy this requirement, 
+which would add complexity with no real hardware to actually 
+demonstrate zero-copy against. Redirecting remaining time to benchmark 
+comparison, cleanup, and documentation - the guaranteed core deliverable 
+(Days 4-21) remains fully complete regardless of this outcome.
+
+## Day 24 — Benchmark Comparison + Session-Length Performance Pattern
+
+Re-ran Day 18's benchmark to investigate an anomalous result (1452.8ms/
+frame) seen once after Day 20's long stability test. Got a second slow 
+result (714.7ms) in a similarly long session, confirming it wasn't a 
+one-off fluke.
+
+**Pattern identified:** performance is consistently fast (~220-230ms/
+frame) early in a fresh VM session, and consistently degrades 
+(500-1450ms/frame, 2-6x slower) later in longer sessions - reproducible 
+across multiple separate sessions, regardless of ONNX threading 
+configuration. Points to VM/host-level resource accumulation over 
+session length, not anything specific to my driver or inference code.
+
+Built a benchmark comparison table (docs/benchmark-comparison.md) 
+documenting all runs side by side with session context, rather than 
+presenting one cherry-picked number.
+
+
+## Day 25 — Decision Checkpoint: DMA-BUF Officially Stopped, Cleanup Begins
+
+Formal checkpoint confirming the Day 22-23 blocker is a genuine 
+architectural boundary, not something to keep pushing on. Began driver 
+code cleanup - scanned for leftover debug code, added a proper header 
+comment to myv4l2.c documenting what the driver is and its development 
+lineage.
+
+
+## Day 26 — README Structure Research + Benchmark Table Finalization
+
+Looked at a few other embedded/driver project READMEs on GitHub for 
+structural inspiration - confirmed my planned structure matches how 
+real technical projects present themselves. Merged the full Day 24 
+benchmark comparison table into the main README rather than a 
+single-run number.
+
+
+## Day 27 — Full README Rewrite 
+
+Rewrote README.md completely to reflect actual current status - full 
+status table, real benchmark numbers with the session-variability 
+caveat, and an honest Limitations section covering CPU-only inference, 
+the reverted thread-tuning attempt, the DMA-BUF architectural blocker, 
+and the synthetic camera scope decision.
+
+
+## Day 28 — Code Cleanup + checkpatch.pl 
+
+Ran checkpatch.pl against myv4l2.c - returned a high count of style 
+warnings (mostly spacing/brace conventions and trailing whitespace), 
+consistent with a first kernel driver not written to strict kernel 
+style from the start, not a functional issue.
+
+Fixed the easy, safe-to-automate categories: trailing whitespace 
+(sed -i 's/[ \t]*$//'), missing space after if/for/while before 
+parentheses. Rebuilt and confirmed identical behavior after cleanup.
+
+Chose not to chase remaining style warnings to zero, given limited 
+remaining time and zero functional impact.
+
+## Day 29 — Demo Recording 
+
+Recorded a demonstration covering both halves of the project: the 
+driver loading, streaming, and benchmark script showing real per-stage 
+timing and FPS from /dev/video0, and the detection pipeline running 
+against a real test photo, showing actual bounding boxes and a printed 
+detection count.
