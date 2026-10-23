@@ -30,6 +30,7 @@ The project is split into a kernel-space V4L2 producer and a userspace
 processing pipeline.
 
 
+```text
 ┌──────────────────────────────────────────────┐
 │              Linux Kernel Space              │
 │                                              │
@@ -71,6 +72,7 @@ processing pipeline.
               Performance Metrics
         (wall-clock + CPU time per stage)
 
+```
 
 ## Why I Built This
 
